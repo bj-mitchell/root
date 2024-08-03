@@ -1,0 +1,128 @@
+To integrate FreeRDP with Unity, you need to follow several steps, including building FreeRDP from source, creating a native plugin, and then calling this plugin from Unity. Here's a detailed guide to get you started:
+Step 1: Build FreeRDP from Source
+
+First, you need to download and build FreeRDP for your platform.
+
+    Clone FreeRDP Repository:
+
+    bash
+
+git clone https://github.com/FreeRDP/FreeRDP.git
+cd FreeRDP
+
+Install Dependencies:
+Follow the FreeRDP build instructions for your specific platform to install the necessary dependencies.
+
+Build FreeRDP:
+
+bash
+
+    cmake -DCMAKE_BUILD_TYPE=Release .
+    make
+
+    Locate the FreeRDP Libraries:
+    After building, the FreeRDP libraries will be available in the libfreerdp and related directories.
+
+Step 2: Create a Native Plugin
+
+Next, you need to create a native plugin that wraps the FreeRDP functionality you need. Here’s an example for Windows using C++:
+
+    Create a New DLL Project in Visual Studio:
+        Open Visual Studio and create a new DLL project.
+        Add the FreeRDP headers and libraries to your project.
+
+    Implement the Plugin:
+
+    Here is a simple example of a plugin that connects to an RDP server:
+
+    cpp
+
+    #include <freerdp/freerdp.h>
+    #include <freerdp/client.h>
+    #include <freerdp/locale/keyboard.h>
+    #include <freerdp/log.h>
+    #include <winpr/wlog.h>
+    #include <iostream>
+
+    extern "C"
+    {
+        __declspec(dllexport) freerdp* ConnectToRDP(const char* hostname, const char* username, const char* password)
+        {
+            freerdp* instance = freerdp_new();
+            instance->settings->ServerHostname = _strdup(hostname);
+            instance->settings->Username = _strdup(username);
+            instance->settings->Password = _strdup(password);
+
+            if (!freerdp_connect(instance))
+            {
+                std::cerr << "Failed to connect to RDP server" << std::endl;
+                freerdp_free(instance);
+                return nullptr;
+            }
+
+            return instance;
+        }
+
+        __declspec(dllexport) void DisconnectFromRDP(freerdp* instance)
+        {
+            if (instance)
+            {
+                freerdp_disconnect(instance);
+                freerdp_free(instance);
+            }
+        }
+    }
+
+    Build the DLL:
+
+    Build your project to create the DLL file, and place the resulting DLL in the Assets/Plugins folder of your Unity project.
+
+Step 3: Integrate the Plugin with Unity
+
+    Create a Unity Script:
+
+    Create a new C# script in Unity to interact with the native plugin.
+
+    csharp
+
+    using UnityEngine;
+    using System.Runtime.InteropServices;
+
+    public class MyRDPClient : MonoBehaviour
+    {
+        [DllImport("MyFreeRDPPlugin")]
+        private static extern System.IntPtr ConnectToRDP(string hostname, string username, string password);
+
+        [DllImport("MyFreeRDPPlugin")]
+        private static extern void DisconnectFromRDP(System.IntPtr instance);
+
+        public string hostname;
+        public string username;
+        public string password;
+
+        private System.IntPtr rdpInstance;
+
+        void Start()
+        {
+            rdpInstance = ConnectToRDP(hostname, username, password);
+        }
+
+        void OnApplicationQuit()
+        {
+            if (rdpInstance != System.IntPtr.Zero)
+            {
+                DisconnectFromRDP(rdpInstance);
+            }
+        }
+    }
+
+    Attach the Script to a GameObject:
+        Create an empty GameObject in your Unity scene.
+        Attach the MyRDPClient script to this GameObject.
+        Set the hostname, username, and password fields in the Inspector.
+
+Step 4: Run the Scene
+
+    Run your scene in Unity. The MyRDPClient script will connect to the specified RDP server when the scene starts and disconnect when the application quits.
+
+This setup provides a basic example of how to use FreeRDP within Unity. For more advanced usage, you will need to handle session management, input forwarding, and rendering the remote desktop session to a texture within Unity.

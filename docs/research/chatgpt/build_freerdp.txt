@@ -1,0 +1,216 @@
+Building FreeRDP in a Docker container and targeting a Windows DLL can be accomplished by setting up a cross-compilation environment. Here's a detailed guide on how to achieve this:
+Step 1: Set Up Docker for Cross-Compilation
+
+We'll use a Docker container with a suitable cross-compilation environment. For this example, we'll use the multiarch/crossbuild image, which supports cross-compiling for various architectures, including Windows.
+
+    Create a Dockerfile:
+
+    Create a Dockerfile to set up the cross-compilation environment.
+
+    Dockerfile
+
+FROM multiarch/crossbuild
+
+RUN apt-get update && apt-get install -y \
+    git \
+    cmake \
+    mingw-w64 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/FreeRDP/FreeRDP.git /FreeRDP
+
+WORKDIR /FreeRDP
+
+RUN mkdir build
+
+WORKDIR /FreeRDP/build
+
+RUN cmake -DCMAKE_TOOLCHAIN_FILE=/usr/share/cmake/mingw/toolchain-x86_64-w64-mingw32.cmake -DCMAKE_BUILD_TYPE=Release ..
+
+RUN make
+
+Build the Docker Image:
+
+Build the Docker image using the Dockerfile.
+
+bash
+
+    docker build -t freerdp-crossbuild .
+
+Step 2: Compile FreeRDP for Windows
+
+Run the Docker container and compile FreeRDP for Windows.
+
+    Run the Docker Container:
+
+    bash
+
+    docker run --rm -v ${PWD}/output:/output freerdp-crossbuild
+
+    This command mounts the current directory's output folder to the container's /output directory, allowing you to access the compiled binaries on your host machine.
+
+Step 3: Create a Native Plugin Wrapper
+
+Next, create a native plugin wrapper for FreeRDP. This will be a DLL that can be used in Unity.
+
+    Create the Plugin Code:
+
+    Create a new C++ file for the plugin.
+
+    cpp
+
+#include <freerdp/freerdp.h>
+#include <freerdp/client.h>
+#include <freerdp/locale/keyboard.h>
+#include <freerdp/log.h>
+#include <winpr/wlog.h>
+#include <iostream>
+
+extern "C"
+{
+    __declspec(dllexport) freerdp* ConnectToRDP(const char* hostname, const char* username, const char* password)
+    {
+        freerdp* instance = freerdp_new();
+        instance->settings->ServerHostname = _strdup(hostname);
+        instance->settings->Username = _strdup(username);
+        instance->settings->Password = _strdup(password);
+
+        if (!freerdp_connect(instance))
+        {
+            std::cerr << "Failed to connect to RDP server" << std::endl;
+            freerdp_free(instance);
+            return nullptr;
+        }
+
+        return instance;
+    }
+
+    __declspec(dllexport) void DisconnectFromRDP(freerdp* instance)
+    {
+        if (instance)
+        {
+            freerdp_disconnect(instance);
+            freerdp_free(instance);
+        }
+    }
+}
+
+Compile the Plugin:
+
+    Create a CMakeLists.txt for the plugin.
+
+    cmake
+
+cmake_minimum_required(VERSION 3.10)
+project(MyFreeRDPPlugin)
+
+add_library(MyFreeRDPPlugin SHARED MyFreeRDPPlugin.cpp)
+
+target_link_libraries(MyFreeRDPPlugin freerdp winpr)
+
+Add the compilation step to the Dockerfile:
+
+Dockerfile
+
+FROM multiarch/crossbuild
+
+RUN apt-get update && apt-get install -y \
+    git \
+    cmake \
+    mingw-w64 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/FreeRDP/FreeRDP.git /FreeRDP
+
+WORKDIR /FreeRDP
+
+RUN mkdir build
+
+WORKDIR /FreeRDP/build
+
+RUN cmake -DCMAKE_TOOLCHAIN_FILE=/usr/share/cmake/mingw/toolchain-x86_64-w64-mingw32.cmake -DCMAKE_BUILD_TYPE=Release ..
+
+RUN make
+
+# Copy the FreeRDP libraries to the output directory
+RUN cp /FreeRDP/build/libfreerdp/*.dll /output/
+
+# Add plugin compilation step
+WORKDIR /plugin
+
+ADD MyFreeRDPPlugin.cpp .
+ADD CMakeLists.txt .
+
+RUN mkdir build
+WORKDIR /plugin/build
+RUN cmake -DCMAKE_TOOLCHAIN_FILE=/usr/share/cmake/mingw/toolchain-x86_64-w64-mingw32.cmake -DCMAKE_BUILD_TYPE=Release ..
+RUN make
+
+# Copy the plugin DLL to the output directory
+RUN cp /plugin/build/MyFreeRDPPlugin.dll /output/
+
+Build the updated Docker image:
+
+bash
+
+docker build -t freerdp-plugin-crossbuild .
+
+Run the Docker container:
+
+bash
+
+        docker run --rm -v ${PWD}/output:/output freerdp-plugin-crossbuild
+
+Step 4: Integrate the Plugin with Unity
+
+    Copy the DLLs:
+
+    Copy the MyFreeRDPPlugin.dll and any FreeRDP dependencies from the output directory to the Assets/Plugins folder of your Unity project.
+
+    Create a Unity Script:
+
+    Create a C# script in Unity to interact with the native plugin.
+
+    csharp
+
+    using UnityEngine;
+    using System.Runtime.InteropServices;
+
+    public class MyRDPClient : MonoBehaviour
+    {
+        [DllImport("MyFreeRDPPlugin")]
+        private static extern System.IntPtr ConnectToRDP(string hostname, string username, string password);
+
+        [DllImport("MyFreeRDPPlugin")]
+        private static extern void DisconnectFromRDP(System.IntPtr instance);
+
+        public string hostname;
+        public string username;
+        public string password;
+
+        private System.IntPtr rdpInstance;
+
+        void Start()
+        {
+            rdpInstance = ConnectToRDP(hostname, username, password);
+        }
+
+        void OnApplicationQuit()
+        {
+            if (rdpInstance != System.IntPtr.Zero)
+            {
+                DisconnectFromRDP(rdpInstance);
+            }
+        }
+    }
+
+    Attach the Script to a GameObject:
+        Create an empty GameObject in your Unity scene.
+        Attach the MyRDPClient script to this GameObject.
+        Set the hostname, username, and password fields in the Inspector.
+
+Step 5: Run the Scene
+
+Run your scene in Unity. The MyRDPClient script will connect to the specified RDP server when the scene starts and disconnect when the application quits.
+
+This setup provides a basic example of using FreeRDP within Unity by leveraging a Docker container for cross-compilation, enabling you to build a Windows-targeted DLL in a Linux environment. Adjustments might be necessary based on your specific requirements and configurations.
